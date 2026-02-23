@@ -1,0 +1,19 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/assignments"
+  to = "/.netlify/functions/assignments"
+  status = 200
+
+[[redirects]]
+  from = "/api/summarize"
+  to = "/.netlify/functions/summarize"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
