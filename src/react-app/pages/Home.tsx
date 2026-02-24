@@ -35,13 +35,20 @@ const SUBJECT_FILTERS = [
 
 export default function HomePage() {
   const [loading, setLoading] = useState(true);
-  const [lastCheck, setLastCheck] = useState<Date | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [lastCheck, setLastCheck] = useState<Date | null>(new Date());
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(new Date());
   const [summaries, setSummaries] = useState<Summary[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [activeFilter, setActiveFilter] = useState("all");
+  const [, setTick] = useState(0);
   const previousContent = useRef<string | null>(null);
   const isFirstFetch = useRef(true);
+
+  // Re-render every second so relative times stay fresh
+  useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const summarizeChanges = useCallback(async (oldContent: string, newContent: string) => {
     setAnalyzing(true);
