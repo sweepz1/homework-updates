@@ -115,8 +115,8 @@ export default function HomePage() {
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     
-    if (diff < 6000) return `${Math.floor(diff / 1000)}s ago`;
-    if (diff < 60000) return "Just now";
+    if (diff < 1500) return "Just now";
+    if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
     return `${Math.floor(diff / 86400000)}d ago`;
