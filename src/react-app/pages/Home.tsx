@@ -65,13 +65,13 @@ export default function HomePage() {
         .order("created_at", { ascending: false })
         .limit(20);
       if (data && data.length > 0) {
-        setSummaries(data.map(row => ({
+        setSummaries(data.map((row: any) => ({
           hasChanges: row.has_changes,
           summary: row.summary,
           subjects: row.subjects,
           timestamp: new Date(row.created_at),
         })));
-        const lastChange = data.find(r => r.has_changes);
+        const lastChange = data.find((r: any) => r.has_changes);
         if (lastChange) setLastUpdated(new Date(lastChange.created_at));
       }
     };
@@ -121,14 +121,14 @@ export default function HomePage() {
         if (previousContent.current && previousContent.current !== result.content) {
           await summarizeChanges(previousContent.current, result.content);
         } else if (isFirstFetch.current) {
-          setSummaries([{
+          // Only show "Monitoring started" if Supabase has no history
+          setSummaries(prev => prev.length === 0 ? [{
             hasChanges: false,
             summary: "Monitoring started. You'll see updates here when the page changes.",
             subjects: [],
             timestamp: new Date(),
-          }]);
+          }] : prev);
           isFirstFetch.current = false;
-          // Do NOT set lastUpdated here — only real changes should update it
         }
         previousContent.current = result.content;
       }
