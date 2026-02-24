@@ -115,7 +115,8 @@ export default function HomePage() {
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     
-    if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
+    if (diff < 6000) return `${Math.floor(diff / 1000)}s ago`;
+    if (diff < 60000) return "Just now";
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
     return `${Math.floor(diff / 86400000)}d ago`;
@@ -167,7 +168,7 @@ export default function HomePage() {
           <StatCard
             icon={<Clock className="w-7 h-7" />}
             label="Last Updated"
-            value={lastUpdated ? formatRelativeTime(lastUpdated) : "--"}
+            value={lastUpdated ? formatRelativeTime(lastUpdated) : "N/A"}
           />
           <StatCard
             icon={<CheckCircle className="w-7 h-7" />}
