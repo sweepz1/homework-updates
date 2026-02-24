@@ -36,7 +36,7 @@ const SUBJECT_FILTERS = [
 export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [lastCheck, setLastCheck] = useState<Date | null>(new Date());
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(new Date());
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [summaries, setSummaries] = useState<Summary[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [activeFilter, setActiveFilter] = useState("all");
@@ -94,6 +94,7 @@ export default function HomePage() {
             timestamp: new Date(),
           }]);
           isFirstFetch.current = false;
+          // Do NOT set lastUpdated here — only real changes should update it
         }
         previousContent.current = result.content;
       }
@@ -114,7 +115,7 @@ export default function HomePage() {
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     
-    if (diff < 60000) return "just now";
+    if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
     return `${Math.floor(diff / 86400000)}d ago`;
