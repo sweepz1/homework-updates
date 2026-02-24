@@ -1,4 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  "https://jnmbjfmnjvzxrxmxmlko.supabase.co",
+  "sb_publishable_miPb8eZako4F2GQVP2iNUA_X73lNJ-0"
+);
 import { RefreshCw, BarChart3, Clock, CheckCircle, Circle, BookOpen, Calculator, FlaskConical, Globe, Palette, Heart, Briefcase, Music, Settings } from "lucide-react";
 
 interface FetchResult {
@@ -50,6 +56,28 @@ export default function HomePage() {
     return () => clearInterval(timer);
   }, []);
 
+  // Load summaries from Supabase on mount
+  useEffect(() => {
+    const loadSummaries = async () => {
+      const { data } = await supabase
+        .from("summaries")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (data && data.length > 0) {
+        setSummaries(data.map(row => ({
+          hasChanges: row.has_changes,
+          summary: row.summary,
+          subjects: row.subjects,
+          timestamp: new Date(row.created_at),
+        })));
+        const lastChange = data.find(r => r.has_changes);
+        if (lastChange) setLastUpdated(new Date(lastChange.created_at));
+      }
+    };
+    loadSummaries();
+  }, []);
+
   const summarizeChanges = useCallback(async (oldContent: string, newContent: string) => {
     setAnalyzing(true);
     try {
@@ -63,6 +91,12 @@ export default function HomePage() {
       if (result.success && result.hasChanges) {
         const now = new Date();
         setLastUpdated(now);
+        // Save to Supabase so all users see it
+        await supabase.from("summaries").insert({
+          has_changes: result.hasChanges,
+          summary: result.summary,
+          subjects: result.subjects,
+        });
         setSummaries(prev => [{
           hasChanges: result.hasChanges,
           summary: result.summary,
