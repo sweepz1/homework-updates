@@ -111,14 +111,19 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [fetchAssignments]);
 
-  const formatRelativeTime = (date: Date) => {
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    
-    const secs = Math.floor(diff / 1000);
+  // For Last Checked card — cycles Just now → 1s → 2s → 3s → 4s → 5s → Just now
+  const formatLastChecked = (date: Date) => {
+    const secs = Math.floor((new Date().getTime() - date.getTime()) / 1000);
     if (secs === 0) return "Just now";
     if (secs <= 5) return `${secs}s ago`;
     return "Just now";
+  };
+
+  // For update cards — counts up forever
+  const formatRelativeTime = (date: Date) => {
+    const diff = new Date().getTime() - date.getTime();
+    const secs = Math.floor(diff / 1000);
+    if (secs < 60) return `${secs}s ago`;
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
     if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
     return `${Math.floor(diff / 86400000)}d ago`;
@@ -175,7 +180,7 @@ export default function HomePage() {
           <StatCard
             icon={<CheckCircle className="w-7 h-7" />}
             label="Last Checked"
-            value={lastCheck ? formatRelativeTime(lastCheck) : "--"}
+            value={lastCheck ? formatLastChecked(lastCheck) : "--"}
           />
           <StatCard
             icon={<Circle className="w-7 h-7 text-emerald-400 fill-emerald-400" />}
