@@ -6,8 +6,8 @@
   "dependencies": {
     "@hono/zod-validator": "^0.5.0",
     "@netlify/functions": "^2.8.1",
-    "@supabase/supabase-js": "^2.97.0",
-    "cheerio": "^1.2.0",
+    "@supabase/supabase-js": "^2.49.4",
+    "cheerio": "^1.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.510.0",
@@ -20,6 +20,7 @@
     "zod": "^3.24.3"
   },
   "devDependencies": {
+    "@vercel/node": "^5.0.0",
     "@eslint/js": "9.25.1",
     "@types/node": "22.14.1",
     "@types/react": "19.0.10",

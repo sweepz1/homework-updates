@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm install --legacy-peer-deps && npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/api/assignments", "destination": "/api/assignments" },
+    { "source": "/api/summarize", "destination": "/api/summarize" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
