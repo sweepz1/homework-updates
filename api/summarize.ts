@@ -1,67 +1,57 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import OpenAI from "openai";
+
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method Not Allowed" });
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+  if (!DEEPSEEK_API_KEY) {
+    return res.status(200).json({ summary: "" });
   }
 
-  const { previousContent, currentContent } = req.body;
-
-  if (!previousContent || !currentContent) {
-    return res.status(400).json({ success: false, error: "Missing content" });
+  const { assignments } = req.body;
+  if (!assignments || !Array.isArray(assignments)) {
+    return res.status(400).json({ error: "Missing assignments" });
   }
 
-  const deepseek = new OpenAI({
-    apiKey: process.env.DEEPSEEK_API_KEY!,
-    baseURL: "https://api.deepseek.com",
-  });
+  const text = assignments
+    .map((s: { subject: string; items: { text: string; urgent: boolean }[] }) =>
+      `${s.subject}:\n${s.items.map(i => `- ${i.text}${i.urgent ? " [URGENT]" : ""}`).join("\n")}`
+    )
+    .join("\n\n");
 
   try {
-    const response = await deepseek.chat.completions.create({
-      model: "deepseek-chat",
-      messages: [
-        {
-          role: "system",
-          content: `You are a helpful assistant that summarizes changes to a school assignments page. 
-Compare the previous and current versions and identify what changed.
-Focus on: new assignments, changed due dates, removed items.
-Format your response as JSON with this structure:
-{
-  "hasChanges": boolean,
-  "summary": "Brief overall summary of changes",
-  "subjects": [
-    { "name": "Subject Name", "changes": ["change 1", "change 2"] }
-  ]
-}
-Only include subjects that actually changed. Be concise.`,
-        },
-        {
-          role: "user",
-          content: `PREVIOUS VERSION:\n${previousContent}\n\n---\n\nCURRENT VERSION:\n${currentContent}`,
-        },
-      ],
-      temperature: 0.3,
+    const response = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        max_tokens: 200,
+        messages: [
+          {
+            role: "system",
+            content: "You are a helpful assistant summarizing a student's homework assignments. Be concise, friendly, and highlight anything urgent. Write 2-3 sentences max.",
+          },
+          {
+            role: "user",
+            content: `Here are the current assignments:\n\n${text}\n\nWrite a short summary for a student.`,
+          },
+        ],
+      }),
     });
 
-    const content = response.choices[0]?.message?.content || "";
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return res.json({ success: true, ...parsed });
-    }
-
-    return res.json({
-      success: true,
-      hasChanges: false,
-      summary: "Unable to parse changes",
-      subjects: [],
-    });
-  } catch (error) {
-    console.error("DeepSeek error:", error);
-    return res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to summarize",
-    });
+    if (!response.ok) throw new Error(`DeepSeek error ${response.status}`);
+    const data = await response.json();
+    const summary = data.choices?.[0]?.message?.content?.trim() ?? "";
+    return res.json({ summary });
+  } catch (err) {
+    console.error("DeepSeek error:", err);
+    return res.status(200).json({ summary: "" });
   }
 }
