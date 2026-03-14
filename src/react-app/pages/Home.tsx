@@ -1,380 +1,486 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { createClient } from "@supabase/supabase-js";
+import { useEffect, useState, useCallback, useRef } from "react";
 
-const supabase = createClient(
-  "https://jnmbjfmnjvzxrxmxmlko.supabase.co",
-  "sb_publishable_miPb8eZako4F2GQVP2iNUA_X73lNJ-0"
-);
-import { RefreshCw, BarChart3, Clock, CheckCircle, Circle, BookOpen, Calculator, FlaskConical, Globe, Palette, Heart, Briefcase, Music, Settings } from "lucide-react";
-
-interface FetchResult {
-  success: boolean;
-  content?: string;
-  fetchedAt?: string;
+interface AssignmentItem {
+  text: string;
+  urgent: boolean;
+}
+interface SubjectBlock {
+  subject: string;
+  items: AssignmentItem[];
+}
+interface ChangeEvent {
+  detectedAt: string;
+  changes: { type: "added" | "removed" | "new_subject"; subject: string; text: string }[];
+}
+interface ApiResponse {
+  assignments: SubjectBlock[];
+  lastUpdated: string;
+  recentChanges: ChangeEvent[];
+  safeHtml: string;
+  fromCache: boolean;
+  stale?: boolean;
   error?: string;
 }
 
-interface SubjectChange {
-  name: string;
-  changes: string[];
+type Tab = "summary" | "live" | "changes";
+
+const SUBJECT_COLORS: Record<string, string> = {
+  "Language Arts": "#185FA5",
+  Math: "#3B6D11",
+  Science: "#534AB7",
+  "Social Studies": "#993556",
+  French: "#993C1D",
+  Art: "#BA7517",
+  ADST: "#BA7517",
+  Physical: "#0F6E56",
+  Career: "#5F5E5A",
+  Music: "#7F77DD",
+  Other: "#5F5E5A",
+};
+
+function getAccent(subject: string) {
+  for (const [key, color] of Object.entries(SUBJECT_COLORS)) {
+    if (subject.toLowerCase().includes(key.toLowerCase())) return color;
+  }
+  return "#888780";
 }
 
-interface Summary {
-  hasChanges: boolean;
-  summary: string;
-  subjects: SubjectChange[];
-  timestamp: Date;
+function timeAgo(iso: string) {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return new Date(iso).toLocaleDateString("en-CA", { month: "short", day: "numeric" });
 }
 
-const SUBJECT_FILTERS = [
-  { id: "all", label: "All", icon: null },
-  { id: "language-arts", label: "Language Arts", icon: BookOpen },
-  { id: "math", label: "Math", icon: Calculator },
-  { id: "science", label: "Science", icon: FlaskConical },
-  { id: "social-studies", label: "Social Studies", icon: Globe },
-  { id: "art-adst", label: "Art/ADST", icon: Palette },
-  { id: "phe", label: "Physical and Health Education", icon: Heart },
-  { id: "career", label: "Career", icon: Briefcase },
-  { id: "music", label: "Music", icon: Music },
-  { id: "other", label: "Other", icon: Settings },
-];
+function Pill({ children, color }: { children: React.ReactNode; color: string }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center",
+      fontSize: 10, fontWeight: 600, letterSpacing: "0.04em",
+      padding: "2px 7px", borderRadius: 99,
+      background: color + "18", color,
+      border: `1px solid ${color}30`,
+    }}>{children}</span>
+  );
+}
 
 export default function HomePage() {
-  const [loading, setLoading] = useState(true);
-  const [lastCheck, setLastCheck] = useState<Date | null>(new Date());
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [summaries, setSummaries] = useState<Summary[]>([]);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [activeFilter, setActiveFilter] = useState("all");
-  const [, setTick] = useState(0);
-  const previousContent = useRef<string | null>(null);
-  const isFirstFetch = useRef(true);
+  const [data, setData] = useState<ApiResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("summary");
+  const [search, setSearch] = useState("");
+  const [tick, setTick] = useState(0);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Re-render every second so relative times stay fresh
-  useEffect(() => {
-    const timer = setInterval(() => setTick(t => t + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Load summaries from Supabase on mount
-  useEffect(() => {
-    const loadSummaries = async () => {
-      const { data } = await supabase
-        .from("summaries")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(20);
-      if (data && data.length > 0) {
-        setSummaries(data.map((row: any) => ({
-          hasChanges: row.has_changes,
-          summary: row.summary,
-          subjects: row.subjects,
-          timestamp: new Date(row.created_at),
-        })));
-        const lastChange = data.find((r: any) => r.has_changes);
-        if (lastChange) setLastUpdated(new Date(lastChange.created_at));
-      }
-    };
-    loadSummaries();
-  }, []);
-
-  const summarizeChanges = useCallback(async (oldContent: string, newContent: string) => {
-    setAnalyzing(true);
-    try {
-      const res = await fetch("/api/summarize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ previousContent: oldContent, currentContent: newContent }),
-      });
-      const result = await res.json();
-      
-      if (result.success && result.hasChanges) {
-        const now = new Date();
-        setLastUpdated(now);
-        // Save to Supabase so all users see it
-        await supabase.from("summaries").insert({
-          has_changes: result.hasChanges,
-          summary: result.summary,
-          subjects: result.subjects,
-        });
-        setSummaries(prev => [{
-          hasChanges: result.hasChanges,
-          summary: result.summary,
-          subjects: result.subjects,
-          timestamp: now,
-        }, ...prev].slice(0, 20));
-      }
-    } catch (error) {
-      console.error("Failed to summarize:", error);
-    } finally {
-      setAnalyzing(false);
-    }
-  }, []);
-
-  const fetchAssignments = useCallback(async () => {
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
       const res = await fetch("/api/assignments");
-      const result: FetchResult = await res.json();
-      setLastCheck(new Date());
-      
-      if (result.success && result.content) {
-        if (previousContent.current && previousContent.current !== result.content) {
-          await summarizeChanges(previousContent.current, result.content);
-        } else if (isFirstFetch.current) {
-          // Only show "Monitoring started" if Supabase has no history
-          setSummaries(prev => prev.length === 0 ? [{
-            hasChanges: false,
-            summary: "Monitoring started. You'll see updates here when the page changes.",
-            subjects: [],
-            timestamp: new Date(),
-          }] : prev);
-          isFirstFetch.current = false;
-        }
-        previousContent.current = result.content;
-      }
-    } catch (error) {
-      console.error("Fetch error:", error);
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const json: ApiResponse = await res.json();
+      if (json.error) throw new Error(json.error);
+      setData(json);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
       setLoading(false);
     }
-  }, [summarizeChanges]);
+  }, []);
 
+  useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => {
-    fetchAssignments();
-    const interval = setInterval(fetchAssignments, 5000);
-    return () => clearInterval(interval);
-  }, [fetchAssignments]);
+    const t = setInterval(() => setTick(n => n + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
 
-  // For Last Checked card — cycles Just now → 1s → 2s → 3s → 4s → 5s → Just now
-  const formatLastChecked = (date: Date) => {
-    const secs = Math.floor((new Date().getTime() - date.getTime()) / 1000);
-    if (secs === 0) return "Just now";
-    if (secs <= 5) return `${secs}s ago`;
-    return "Just now";
-  };
+  // Write safe HTML into iframe
+  useEffect(() => {
+    if (tab === "live" && data?.safeHtml && iframeRef.current) {
+      const doc = iframeRef.current.contentDocument;
+      if (doc) {
+        doc.open();
+        doc.write(`<!DOCTYPE html><html><head>
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+          <style>
+            body { font-family: system-ui, sans-serif; font-size: 15px; line-height: 1.6;
+                   color: #1a1a18; padding: 20px 24px; max-width: 700px; margin: 0 auto; }
+            img { max-width: 100%; height: auto; border-radius: 8px; }
+            a { color: #185FA5; }
+            h1,h2,h3 { font-weight: 600; margin: 1.2em 0 0.4em; }
+            p { margin: 0.5em 0; }
+            strong { font-weight: 600; }
+            ul,ol { padding-left: 1.4em; }
+            .sidebar, .widget, .navigation, #sidebar, .nav, header, footer, nav { display: none !important; }
+          </style>
+        </head><body>${data.safeHtml}</body></html>`);
+        doc.close();
+      }
+    }
+  }, [tab, data?.safeHtml]);
 
-  // For update cards — counts up forever
-  const formatRelativeTime = (date: Date) => {
-    const diff = new Date().getTime() - date.getTime();
-    const secs = Math.floor(diff / 1000);
-    if (secs < 60) return `${secs}s ago`;
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-    return `${Math.floor(diff / 86400000)}d ago`;
-  };
+  const urgentItems = data?.assignments.flatMap(s =>
+    s.items.filter(i => i.urgent).map(i => ({ ...i, subject: s.subject }))
+  ) ?? [];
 
-  const filterSummaries = (items: Summary[]) => {
-    if (activeFilter === "all") return items;
-    return items.filter(s => 
-      s.subjects.some(sub => 
-        sub.name.toLowerCase().replace(/[\s\/]/g, "-").includes(activeFilter)
-      )
-    );
-  };
+  const filtered = search.trim()
+    ? data?.assignments.map(s => ({
+        ...s,
+        items: s.items.filter(i => i.text.toLowerCase().includes(search.toLowerCase())),
+      })).filter(s => s.items.length > 0)
+    : data?.assignments;
 
-  const filteredSummaries = filterSummaries(summaries);
+  const tabStyle = (t: Tab): React.CSSProperties => ({
+    padding: "8px 16px",
+    fontSize: 13,
+    fontWeight: tab === t ? 500 : 400,
+    color: tab === t ? "#1a1a18" : "#888780",
+    background: "none",
+    border: "none",
+    borderBottom: tab === t ? "2px solid #1a1a18" : "2px solid transparent",
+    cursor: "pointer",
+    transition: "all 0.15s",
+    whiteSpace: "nowrap",
+  });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0a0e1a] to-[#0f1322] text-white">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-[#1a1f2e]/95 backdrop-blur-sm border-b border-[#2d3848]">
-        <div className="max-w-6xl mx-auto px-6 lg:px-10 py-5 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-white to-blue-400 bg-clip-text text-transparent">
-              Homework Updates
-            </h1>
-            <p className="text-sm text-[#8892a4] mt-1">
-              Monitor Ms. Smith's Blog for assignments
-            </p>
-          </div>
-          <button
-            onClick={() => fetchAssignments()}
-            disabled={loading || analyzing}
-            className="flex items-center gap-2 px-5 py-2.5 bg-black hover:bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg text-sm font-semibold transition-all hover:-translate-y-0.5 hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <RefreshCw className={`w-4 h-4 ${(loading || analyzing) ? "animate-spin" : ""}`} />
-            Check Now
-          </button>
-        </div>
-      </header>
+    <div style={{ minHeight: "100vh", background: "#FAFAF8" }}>
+      <style>{`
+        @keyframes fadeUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes shimmer { 0%,100%{opacity:0.5} 50%{opacity:1} }
+        * { box-sizing: border-box; }
+      `}</style>
 
-      <main className="max-w-6xl mx-auto px-6 lg:px-10 py-8">
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
-          <StatCard
-            icon={<BarChart3 className="w-7 h-7" />}
-            label="Total Updates"
-            value={summaries.filter(s => s.hasChanges).length.toString()}
-          />
-          <StatCard
-            icon={<Clock className="w-7 h-7" />}
-            label="Last Updated"
-            value={lastUpdated ? formatRelativeTime(lastUpdated) : "N/A"}
-          />
-          <StatCard
-            icon={<CheckCircle className="w-7 h-7" />}
-            label="Last Checked"
-            value={lastCheck ? formatLastChecked(lastCheck) : "--"}
-          />
-          <StatCard
-            icon={<Circle className="w-7 h-7 text-emerald-400 fill-emerald-400" />}
-            label="Status"
-            value="Live"
-            valueClass="text-emerald-400"
-          />
-        </div>
-
-        {/* Updates Section */}
-        <section className="bg-[#1a1f2e] rounded-xl border border-[#2d3848] p-6 lg:p-8">
-          <div className="flex items-center justify-between pb-5 mb-6 border-b border-[#2d3848]">
-            <h2 className="text-lg font-bold">Recent Updates</h2>
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
-          </div>
-
-          {/* Subject Tabs */}
-          <div className="flex gap-2 mb-6 pb-4 border-b border-[#2d3848] overflow-x-auto scrollbar-thin scrollbar-thumb-[#2d3848]">
-            {SUBJECT_FILTERS.map(filter => (
-              <button
-                key={filter.id}
-                onClick={() => setActiveFilter(filter.id)}
-                className={`flex items-center gap-1.5 px-4 py-2 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors ${
-                  activeFilter === filter.id
-                    ? "text-blue-400 border-blue-400"
-                    : "text-[#e0e6ed] border-transparent hover:text-white hover:border-[#2d3848]"
-                }`}
-              >
-                {filter.icon && <filter.icon className="w-3.5 h-3.5" />}
-                {filter.label}
-                {activeFilter === filter.id && (
-                  <span className="w-1 h-1 rounded-full bg-blue-400 ml-1" />
-                )}
-              </button>
-            ))}
-          </div>
-
-          {/* Updates List */}
-          <div className="space-y-4">
-            {loading && summaries.length === 0 ? (
-              <div className="text-center py-20">
-                <div className="w-10 h-10 border-3 border-[#2d3848] border-t-blue-400 rounded-full animate-spin mx-auto mb-4" />
-                <p className="text-sm text-[#8892a4]">Loading homework updates...</p>
+      {/* Top bar */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 20,
+        background: "rgba(250,250,248,0.92)",
+        backdropFilter: "blur(8px)",
+        borderBottom: "1px solid #E8E6DF",
+      }}>
+        <div style={{ maxWidth: 760, margin: "0 auto", padding: "14px 24px 0" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 600, color: "#1a1a18", letterSpacing: "-0.2px" }}>
+                Assignment Pulse
               </div>
-            ) : filteredSummaries.length === 0 ? (
-              <div className="text-center py-20">
-                <p className="text-3xl mb-4">📚</p>
-                <p className="text-[#8892a4]">
-                  {activeFilter === "all" 
-                    ? "No updates yet. The system is monitoring for changes." 
-                    : "No homework updates for this subject."}
-                </p>
-              </div>
-            ) : (
-              filteredSummaries.map((summary, index) => (
-                <UpdateCard
-                  key={index}
-                  summary={summary}
-                  isLatest={index === 0}
-                  formatTime={formatRelativeTime}
-                />
-              ))
-            )}
-          </div>
-        </section>
-      </main>
-
-      {/* Footer */}
-      <footer className="bg-[#1a1f2e] border-t border-[#2d3848] mt-auto">
-        <div className="max-w-6xl mx-auto px-6 py-4 text-center text-xs text-[#8892a4]">
-          Made in Canada 🍁
-        </div>
-      </footer>
-
-      {/* Analyzing Toast */}
-      {analyzing && (
-        <div className="fixed top-24 right-6 bg-[#1a1f2e] border border-blue-400/30 text-white px-5 py-3 rounded-xl shadow-lg animate-in slide-in-from-right text-sm font-medium">
-          <span className="flex items-center gap-2">
-            <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
-            Analyzing changes...
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StatCard({ 
-  icon, 
-  label, 
-  value, 
-  valueClass = "" 
-}: { 
-  icon: React.ReactNode; 
-  label: string; 
-  value: string;
-  valueClass?: string;
-}) {
-  return (
-    <div className="bg-[#1a1f2e] rounded-xl border border-[#2d3848] p-5 flex items-start gap-4 transition-all hover:border-blue-400 hover:bg-gradient-to-br hover:from-[#1a1f2e] hover:to-blue-500/5 hover:-translate-y-1 hover:shadow-[0_8px_24px_rgba(59,130,246,0.2)] group">
-      <div className="text-[#8892a4] group-hover:text-blue-400 transition-colors">
-        {icon}
-      </div>
-      <div>
-        <p className="text-[10px] uppercase tracking-wider font-bold text-[#8892a4] mb-1">
-          {label}
-        </p>
-        <p className={`text-xl font-bold ${valueClass}`}>
-          {value}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function UpdateCard({ 
-  summary, 
-  isLatest, 
-  formatTime 
-}: { 
-  summary: Summary; 
-  isLatest: boolean;
-  formatTime: (date: Date) => string;
-}) {
-  return (
-    <div className="bg-gradient-to-br from-[#242d3d] to-blue-500/[0.02] border border-[#2d3848] border-l-4 border-l-blue-400 rounded-xl p-5 transition-all hover:bg-gradient-to-br hover:from-blue-500/[0.08] hover:to-blue-500/[0.04] hover:border-blue-400 hover:translate-x-1.5 hover:shadow-[0_8px_24px_rgba(59,130,246,0.15)]">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-bold">
-          {isLatest ? "Latest" : "Update"}
-        </h3>
-        <span className="text-xs text-[#8892a4] bg-[#1a1f2e] px-2.5 py-1 rounded-md border border-[#2d3848]">
-          {formatTime(summary.timestamp)}
-        </span>
-      </div>
-      
-      <p className="text-sm text-[#e0e6ed] leading-relaxed mb-4">
-        {summary.summary}
-      </p>
-
-      {summary.subjects.length > 0 && (
-        <div className="space-y-3 pt-3 border-t border-[#2d3848]">
-          {summary.subjects.map((subject, idx) => (
-            <div key={idx} className="flex items-start gap-2">
-              <BookOpen className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" />
-              <div>
-                <span className="text-xs font-semibold text-white">
-                  {subject.name}
-                </span>
-                <ul className="mt-1 space-y-0.5">
-                  {subject.changes.map((change, cIdx) => (
-                    <li key={cIdx} className="text-xs text-[#8892a4]">
-                      • {change}
-                    </li>
-                  ))}
-                </ul>
+              <div style={{ fontSize: 11, color: "#B4B2A9", marginTop: 1 }}>
+                {data ? (
+                  <>
+                    {data.stale ? "⚠ stale · " : data.fromCache ? "cached · " : "live · "}
+                    {timeAgo(data.lastUpdated)}
+                    {tick > -1 ? "" : ""}
+                  </>
+                ) : "Loading..."}
               </div>
             </div>
-          ))}
+            <button
+              onClick={fetchData}
+              disabled={loading}
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                background: "#1a1a18", color: "#fff",
+                border: "none", borderRadius: 7,
+                padding: "7px 12px", fontSize: 12, fontWeight: 500,
+                cursor: loading ? "not-allowed" : "pointer",
+                opacity: loading ? 0.55 : 1,
+              }}
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none"
+                style={{ animation: loading ? "spin 1s linear infinite" : "none" }}>
+                <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.8 0 3.4.87 4.4 2.2"
+                  stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+                <path d="M13.5 2.5v2.5H11"
+                  stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              {loading ? "Checking…" : "Refresh"}
+            </button>
+          </div>
+
+          {/* Tabs */}
+          <div style={{ display: "flex", gap: 0 }}>
+            <button style={tabStyle("summary")} onClick={() => setTab("summary")}>Summary</button>
+            <button style={tabStyle("live")} onClick={() => setTab("live")}>Live Page</button>
+            <button style={tabStyle("changes")} onClick={() => setTab("changes")}>
+              Changes
+              {data?.recentChanges.length ? (
+                <span style={{
+                  marginLeft: 5, fontSize: 10, fontWeight: 600,
+                  background: "#1a1a18", color: "#fff",
+                  padding: "1px 5px", borderRadius: 99,
+                }}>{data.recentChanges.length}</span>
+              ) : null}
+            </button>
+          </div>
         </div>
-      )}
+      </div>
+
+      {/* Content */}
+      <div style={{ maxWidth: 760, margin: "0 auto", padding: "24px 24px 60px" }}>
+        {error && (
+          <div style={{
+            background: "#FCEBEB", color: "#A32D2D",
+            border: "1px solid #F7C1C1", borderRadius: 10,
+            padding: "12px 16px", marginBottom: 16, fontSize: 13,
+          }}>
+            {error} —{" "}
+            <button onClick={fetchData} style={{ background: "none", border: "none", color: "inherit", fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* SUMMARY TAB */}
+        {tab === "summary" && (
+          <div style={{ animation: "fadeUp 0.25s ease" }}>
+
+            {/* Urgent banner */}
+            {urgentItems.length > 0 && (
+              <div style={{
+                background: "#fff8ed",
+                border: "1px solid #F5C4B3",
+                borderRadius: 10, padding: "14px 16px", marginBottom: 20,
+              }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#993C1D", marginBottom: 8, letterSpacing: "0.05em" }}>
+                  NEEDS ATTENTION · {urgentItems.length} item{urgentItems.length !== 1 ? "s" : ""}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {urgentItems.map((item, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                      <Pill color={getAccent(item.subject)}>{item.subject}</Pill>
+                      <span style={{ fontSize: 13, color: "#633806" }}>{item.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Search */}
+            {data && (
+              <div style={{ position: "relative", marginBottom: 16 }}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"
+                  style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#B4B2A9" }}>
+                  <circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.4"/>
+                  <path d="M10 10l3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+                </svg>
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search assignments…"
+                  style={{
+                    width: "100%", padding: "8px 12px 8px 32px",
+                    fontSize: 13, border: "1px solid #E8E6DF", borderRadius: 8,
+                    background: "#fff", color: "#1a1a18", outline: "none",
+                  }}
+                />
+                {search && (
+                  <button onClick={() => setSearch("")} style={{
+                    position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                    background: "none", border: "none", color: "#B4B2A9", cursor: "pointer", fontSize: 16, lineHeight: 1,
+                  }}>×</button>
+                )}
+              </div>
+            )}
+
+            {/* Skeleton */}
+            {loading && !data && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {[1,2,3,4,5].map(i => (
+                  <div key={i} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E6DF", padding: "14px 16px", animation: "shimmer 1.4s ease infinite", animationDelay: `${i*100}ms` }}>
+                    <div style={{ height: 12, width: "25%", background: "#E8E6DF", borderRadius: 4, marginBottom: 10 }} />
+                    <div style={{ height: 11, width: "75%", background: "#F1EFE8", borderRadius: 4, marginBottom: 6 }} />
+                    <div style={{ height: 11, width: "55%", background: "#F1EFE8", borderRadius: 4 }} />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* No results */}
+            {data && filtered?.length === 0 && (
+              <div style={{ textAlign: "center", padding: "48px 0", color: "#B4B2A9" }}>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>—</div>
+                <div style={{ fontSize: 14 }}>{search ? "No matches found" : "Nothing posted yet"}</div>
+              </div>
+            )}
+
+            {/* Subject cards */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {filtered?.map((block, i) => {
+                const accent = getAccent(block.subject);
+                return (
+                  <div key={block.subject} style={{
+                    background: "#fff",
+                    border: "1px solid #E8E6DF",
+                    borderRadius: 10,
+                    overflow: "hidden",
+                    animation: `fadeUp 0.25s ease both`,
+                    animationDelay: `${i * 35}ms`,
+                  }}>
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      padding: "10px 14px",
+                      borderBottom: "1px solid #F1EFE8",
+                      borderLeft: `3px solid ${accent}`,
+                    }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: accent, letterSpacing: "0.02em" }}>
+                        {block.subject.toUpperCase()}
+                      </span>
+                      <span style={{ marginLeft: "auto", fontSize: 11, color: "#B4B2A9" }}>
+                        {block.items.length} item{block.items.length !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <div>
+                      {block.items.map((item, j) => (
+                        <div key={j} style={{
+                          display: "flex", alignItems: "flex-start", gap: 10,
+                          padding: "9px 14px",
+                          borderBottom: j < block.items.length - 1 ? "1px solid #F7F6F2" : "none",
+                          background: item.urgent ? "#fffcf5" : "transparent",
+                        }}>
+                          <div style={{
+                            width: 4, height: 4, borderRadius: "50%", flexShrink: 0,
+                            background: item.urgent ? "#BA7517" : "#D3D1C7",
+                            marginTop: 7,
+                          }} />
+                          <span style={{
+                            fontSize: 13, lineHeight: 1.55,
+                            color: item.urgent ? "#4A2800" : "#2c2c2a",
+                            fontWeight: item.urgent ? 500 : 400,
+                          }}>
+                            {item.text}
+                            {item.urgent && (
+                              <span style={{
+                                marginLeft: 6, fontSize: 9, fontWeight: 700,
+                                background: "#FAEEDA", color: "#BA7517",
+                                padding: "1px 5px", borderRadius: 4,
+                                verticalAlign: "middle", letterSpacing: "0.05em",
+                              }}>URGENT</span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {data && (
+              <p style={{ fontSize: 11, color: "#D3D1C7", textAlign: "center", marginTop: 20 }}>
+                Source:{" "}
+                <a href="https://sd41blogs.ca/smithc/weekly-assignments-submission-details/"
+                  target="_blank" rel="noreferrer" style={{ color: "#B4B2A9" }}>
+                  Ms. Smith's blog
+                </a>
+                {" "}· Refreshes every 15 min · Shared for all
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* LIVE TAB */}
+        {tab === "live" && (
+          <div style={{ animation: "fadeUp 0.25s ease" }}>
+            <div style={{
+              background: "#fff", border: "1px solid #E8E6DF",
+              borderRadius: 10, overflow: "hidden",
+            }}>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "10px 14px", borderBottom: "1px solid #E8E6DF",
+                background: "#FAFAF8",
+              }}>
+                <div style={{ display: "flex", gap: 5 }}>
+                  {["#F09595","#FAC775","#97C459"].map(c => (
+                    <div key={c} style={{ width: 9, height: 9, borderRadius: "50%", background: c }} />
+                  ))}
+                </div>
+                <span style={{ fontSize: 11, color: "#B4B2A9", flex: 1, textAlign: "center" }}>
+                  sd41blogs.ca/smithc/weekly-assignments-submission-details
+                </span>
+                <a
+                  href="https://sd41blogs.ca/smithc/weekly-assignments-submission-details/"
+                  target="_blank" rel="noreferrer"
+                  style={{ fontSize: 11, color: "#185FA5", textDecoration: "none" }}
+                >
+                  Open ↗
+                </a>
+              </div>
+              {data?.safeHtml ? (
+                <iframe
+                  ref={iframeRef}
+                  title="Ms. Smith's assignments page"
+                  style={{ width: "100%", height: 600, border: "none", display: "block" }}
+                  sandbox="allow-same-origin"
+                />
+              ) : (
+                <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: "#B4B2A9", fontSize: 13 }}>
+                  {loading ? "Loading…" : "No content available"}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* CHANGES TAB */}
+        {tab === "changes" && (
+          <div style={{ animation: "fadeUp 0.25s ease" }}>
+            {!data || data.recentChanges.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "60px 0", color: "#B4B2A9" }}>
+                <div style={{ fontSize: 28, marginBottom: 8 }}>—</div>
+                <div style={{ fontSize: 14 }}>No changes detected yet.</div>
+                <div style={{ fontSize: 12, marginTop: 4 }}>Changes appear when Ms. Smith updates her page.</div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {data.recentChanges.map((event, i) => (
+                  <div key={i} style={{
+                    background: "#fff", border: "1px solid #E8E6DF",
+                    borderRadius: 10, overflow: "hidden",
+                    animation: `fadeUp 0.25s ease both`,
+                    animationDelay: `${i * 40}ms`,
+                  }}>
+                    <div style={{
+                      padding: "10px 14px", borderBottom: "1px solid #F1EFE8",
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                    }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#1a1a18" }}>
+                        {event.changes.length} change{event.changes.length !== 1 ? "s" : ""} detected
+                      </span>
+                      <span style={{ fontSize: 11, color: "#B4B2A9" }}>{timeAgo(event.detectedAt)}</span>
+                    </div>
+                    <div>
+                      {event.changes.map((change, j) => (
+                        <div key={j} style={{
+                          display: "flex", alignItems: "flex-start", gap: 10,
+                          padding: "9px 14px",
+                          borderBottom: j < event.changes.length - 1 ? "1px solid #F7F6F2" : "none",
+                          background: change.type === "removed" ? "#fffafa" : change.type === "added" ? "#f5fff7" : "#fafff5",
+                        }}>
+                          <span style={{
+                            fontSize: 10, fontWeight: 700, flexShrink: 0, marginTop: 2,
+                            color: change.type === "removed" ? "#A32D2D" : "#3B6D11",
+                            letterSpacing: "0.04em",
+                          }}>
+                            {change.type === "removed" ? "−" : "+"}
+                          </span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <Pill color={getAccent(change.subject)}>{change.subject}</Pill>
+                            <span style={{ fontSize: 13, color: "#2c2c2a", lineHeight: 1.5 }}>{change.text}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
