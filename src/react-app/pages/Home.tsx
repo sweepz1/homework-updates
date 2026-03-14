@@ -281,7 +281,7 @@ export default function HomePage() {
         {tab === "summary" && (
           <div style={{ animation: "fadeUp 0.25s ease" }}>
 
-            {/* AI Summary box */}
+            {/* AI Summary */}
             {(aiLoading || aiSummary) && (
               <div style={{
                 background: "#fff", border: "1px solid #E8E6DF",
@@ -457,22 +457,14 @@ export default function HomePage() {
               borderRadius: 10, overflow: "hidden",
             }}>
               <div style={{
-                display: "flex", alignItems: "center", gap: 8,
+                display: "flex", alignItems: "center", justifyContent: "space-between",
                 padding: "10px 14px", borderBottom: "1px solid #E8E6DF",
-                background: "#FAFAF8",
               }}>
-                <div style={{ display: "flex", gap: 5 }}>
-                  {["#F09595","#FAC775","#97C459"].map(c => (
-                    <div key={c} style={{ width: 9, height: 9, borderRadius: "50%", background: c }} />
-                  ))}
-                </div>
-                <span style={{ fontSize: 11, color: "#B4B2A9", flex: 1, textAlign: "center" }}>
-                  sd41blogs.ca/smithc/weekly-assignments-submission-details
-                </span>
+                <span style={{ fontSize: 12, color: "#888780" }}>Ms. Smith's page</span>
                 <a href="https://sd41blogs.ca/smithc/weekly-assignments-submission-details/"
                   target="_blank" rel="noreferrer"
-                  style={{ fontSize: 11, color: "#185FA5", textDecoration: "none" }}>
-                  Open ↗
+                  style={{ fontSize: 12, color: "#185FA5", textDecoration: "none" }}>
+                  Open original ↗
                 </a>
               </div>
               {data?.safeHtml ? (
