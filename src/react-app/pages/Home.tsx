@@ -121,7 +121,7 @@ export default function HomePage() {
     }
   }, [tab, data?.safeHtml]);
 
-  const urgentItems = data?.assignments.flatMap(s =>
+  const urgentItems = data?.assignments?.flatMap(s =>
     s.items.filter(i => i.urgent).map(i => ({ ...i, subject: s.subject }))
   ) ?? [];
 
